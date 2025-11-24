@@ -12,5 +12,8 @@
   },
   "engineStrict": true,
   "author": "João Alberto <joaoalberto.contato@gmail.com>",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^24.10.1"
+  }
 }
