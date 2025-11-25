@@ -33,3 +33,40 @@
 //   users: [["John", "john@example.com", 30]]
 // error:
 //   NULL
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as process from "node:process";
+import * as util from "node:util";
+
+const ERROR = util.styleText(["bgRed", "bold"], "Error:");
+const INFO = util.styleText(["bgBlueBright", "bold"], "Info:");
+
+function main(file_path?: string) {
+  if (!file_path) {
+    process.stdout.write(`${ERROR} Argument 'path' is required.\n`);
+    return;
+  }
+
+  const current_dir = process.cwd();
+  const final_path = path.join(current_dir, file_path);
+
+  if (!fs.existsSync(final_path)) {
+    process.stdout.write(
+      `${ERROR} Directory of file ${final_path} not found.\n`
+    );
+    return;
+  }
+
+  const dir = fs.readdirSync(path.join(current_dir, file_path));
+
+  for (let entry of dir) {
+    const file_path = path.join(final_path, entry);
+    const is_dir = fs.lstatSync(file_path).isDirectory();
+    const type = is_dir ? "directory" : "file";
+
+    process.stdout.write(`${INFO} ${type} ${entry} found.\n`);
+  }
+}
+
+export { main };
