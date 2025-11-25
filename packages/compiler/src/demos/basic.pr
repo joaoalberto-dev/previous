@@ -1,5 +1,0 @@
-message User {
-    string name
-    string email
-    number age
-}
