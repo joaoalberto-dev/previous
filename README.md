@@ -16,10 +16,26 @@ You can create your Resources by defining its shape with field types and names.
 
 ```
 resource User {
-    string name
-    string email
-    number age
-    bool   active
+    string   name
+    string   email
+    optional number age
+    bool     active
+}
+
+resource Names {
+    list string name
+}
+
+resource Users {
+    list User
+}
+
+resource Settings {
+    nullable bool notifications
+}
+
+resource Notification {
+    number default(10) interval
 }
 ```
 
