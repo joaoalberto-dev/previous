@@ -709,9 +709,105 @@ impl Compiler {
     }
 
     pub fn compile(&self) -> Result<CompiledOutput, String> {
-        // For now, just create empty IR output.
-        // TODO: Implement type resolution and cycle detection in next tasks
-        Ok(CompiledOutput::new())
+        // 1. Validate AST (already done in new())
+
+        // 2. Type resolution
+        let resolver = TypeResolver::new(&self.program)?;
+        let ir = resolver.resolve(self.program.clone())?;
+
+        // 3. TODO: Cycle detection in Task 3
+
+        // 4. Return compiled IR
+        Ok(CompiledOutput { ir })
+    }
+}
+
+// ============================================================================
+// TYPE RESOLVER
+// ============================================================================
+
+pub struct TypeResolver {
+    resource_map: std::collections::HashMap<String, usize>,
+}
+
+impl TypeResolver {
+    /// Build a type resolver from an AST program
+    ///
+    /// Creates a mapping of resource names to their indices for fast lookup
+    /// during type resolution.
+    pub fn new(program: &Program) -> Result<Self, String> {
+        let mut resource_map = std::collections::HashMap::new();
+
+        for (index, resource) in program.resources.iter().enumerate() {
+            if resource_map.insert(resource.name.clone(), index).is_some() {
+                // This shouldn't happen because Compiler::new validates uniqueness
+                return Err(format!("Duplicate resource name: {}", resource.name));
+            }
+        }
+
+        Ok(TypeResolver { resource_map })
+    }
+
+    /// Resolve a single AST type to an IR type
+    ///
+    /// Converts:
+    /// - ASTType::Primitive(s) → IRType::Primitive(s)
+    /// - ASTType::Named(s) → IRType::ResourceRef(index) or error
+    /// - ASTType::List(inner) → IRType::List(resolved_inner)
+    fn resolve_type(&self, ast_type: &ASTType) -> Result<IRType, String> {
+        match ast_type {
+            ASTType::Primitive(name) => {
+                // Validate it's one of the three primitives
+                match name.as_str() {
+                    "string" | "number" | "bool" => Ok(IRType::Primitive(name.clone())),
+                    _ => Err(format!("Invalid primitive type: {}", name)),
+                }
+            }
+            ASTType::Named(name) => {
+                // Look up the resource name
+                match self.resource_map.get(name) {
+                    Some(&index) => Ok(IRType::ResourceRef(index)),
+                    None => Err(format!("Undefined type: {}", name)),
+                }
+            }
+            ASTType::List(inner) => {
+                // Recursively resolve the inner type
+                let resolved_inner = self.resolve_type(inner)?;
+                Ok(IRType::List(Box::new(resolved_inner)))
+            }
+        }
+    }
+
+    /// Transform an entire AST program to an IR program
+    ///
+    /// Converts all field types from AST to IR, preserving all field attributes.
+    pub fn resolve(&self, program: Program) -> Result<IRProgram, String> {
+        let mut ir_resources = Vec::new();
+
+        for ast_resource in program.resources {
+            let mut ir_fields = Vec::new();
+
+            for ast_field in ast_resource.fields {
+                let resolved_type = self.resolve_type(&ast_field.field_type)?;
+                ir_fields.push(IRField {
+                    name: ast_field.name,
+                    field_type: resolved_type,
+                    nullable: ast_field.nullable,
+                    optional: ast_field.optional,
+                    default: ast_field.default,
+                    index: ast_field.index,
+                });
+            }
+
+            ir_resources.push(IRResource {
+                name: ast_resource.name,
+                fields: ir_fields,
+            });
+        }
+
+        Ok(IRProgram {
+            resources: ir_resources,
+        })
     }
 }
 
@@ -999,5 +1095,250 @@ mod tests {
         };
 
         assert!(field.default.is_some());
+    }
+
+    // ========================================================================
+    // TYPE RESOLVER TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_type_resolver_new() {
+        let schema = r#"
+            resource User { string name }
+            resource Post { string title }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program);
+
+        assert!(resolver.is_ok());
+        let resolver = resolver.unwrap();
+        // Verify both resources are in the map
+        assert!(resolver.resource_map.contains_key("User"));
+        assert!(resolver.resource_map.contains_key("Post"));
+    }
+
+    #[test]
+    fn test_resolve_primitive_types() {
+        let schema = r#"
+            resource Config {
+                string name
+                number timeout
+                bool enabled
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        assert_eq!(ir.resources.len(), 1);
+        assert_eq!(ir.resources[0].fields.len(), 3);
+
+        // Verify types are preserved
+        match &ir.resources[0].fields[0].field_type {
+            IRType::Primitive(s) => assert_eq!(s, "string"),
+            _ => panic!("Expected primitive string"),
+        }
+        match &ir.resources[0].fields[1].field_type {
+            IRType::Primitive(s) => assert_eq!(s, "number"),
+            _ => panic!("Expected primitive number"),
+        }
+        match &ir.resources[0].fields[2].field_type {
+            IRType::Primitive(s) => assert_eq!(s, "bool"),
+            _ => panic!("Expected primitive bool"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_named_type() {
+        let schema = r#"
+            resource User { string name }
+            resource Profile { User user }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        // Profile references User
+        assert_eq!(ir.resources.len(), 2);
+        assert_eq!(ir.resources[0].name, "User");
+        assert_eq!(ir.resources[1].name, "Profile");
+
+        // Check that the reference is resolved to index 0
+        match &ir.resources[1].fields[0].field_type {
+            IRType::ResourceRef(idx) => assert_eq!(*idx, 0),
+            _ => panic!("Expected ResourceRef"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_list_of_primitives() {
+        let schema = r#"
+            resource Names {
+                list string names
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        match &ir.resources[0].fields[0].field_type {
+            IRType::List(inner) => match **inner {
+                IRType::Primitive(ref s) => assert_eq!(s, "string"),
+                _ => panic!("Expected primitive inner type"),
+            },
+            _ => panic!("Expected list type"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_list_of_named_type() {
+        let schema = r#"
+            resource User { string name }
+            resource Users { list User users }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        // Check Users.users field
+        match &ir.resources[1].fields[0].field_type {
+            IRType::List(inner) => match **inner {
+                IRType::ResourceRef(idx) => assert_eq!(idx, 0),
+                _ => panic!("Expected ResourceRef inner type"),
+            },
+            _ => panic!("Expected list type"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_nested_lists() {
+        let schema = r#"
+            resource Matrix {
+                list list number values
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        // Verify nested list structure: List(List(Primitive))
+        match &ir.resources[0].fields[0].field_type {
+            IRType::List(outer) => match **outer {
+                IRType::List(ref inner) => match **inner {
+                    IRType::Primitive(ref s) => assert_eq!(s, "number"),
+                    _ => panic!("Expected primitive inner type"),
+                },
+                _ => panic!("Expected inner list"),
+            },
+            _ => panic!("Expected outer list"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_preserves_field_attributes() {
+        let schema = r#"
+            resource Config {
+                optional number age
+                nullable bool enabled
+                default(10) number timeout
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        // Check first field (optional)
+        assert!(ir.resources[0].fields[0].optional);
+        assert!(!ir.resources[0].fields[0].nullable);
+
+        // Check second field (nullable)
+        assert!(ir.resources[0].fields[1].nullable);
+        assert!(!ir.resources[0].fields[1].optional);
+
+        // Check third field (default)
+        assert!(ir.resources[0].fields[2].default.is_some());
+    }
+
+    #[test]
+    fn test_resolve_undefined_type_error() {
+        let schema = r#"
+            resource User {
+                Unknown unknownField
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let result = resolver.resolve(program);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Undefined type"));
+    }
+
+    #[test]
+    fn test_resolve_multiple_resources() {
+        let schema = r#"
+            resource User {
+                string name
+                string email
+            }
+            resource Post {
+                string title
+                User author
+            }
+            resource Blog {
+                list Post posts
+                User owner
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        // Verify all resources are resolved
+        assert_eq!(ir.resources.len(), 3);
+        assert_eq!(ir.resources[0].name, "User");
+        assert_eq!(ir.resources[1].name, "Post");
+        assert_eq!(ir.resources[2].name, "Blog");
+
+        // Verify references
+        // Post.author should reference User (index 0)
+        match &ir.resources[1].fields[1].field_type {
+            IRType::ResourceRef(idx) => assert_eq!(*idx, 0),
+            _ => panic!("Expected ResourceRef"),
+        }
+
+        // Blog.posts should be List(ResourceRef(1))
+        match &ir.resources[2].fields[0].field_type {
+            IRType::List(inner) => match **inner {
+                IRType::ResourceRef(idx) => assert_eq!(idx, 1),
+                _ => panic!("Expected ResourceRef"),
+            },
+            _ => panic!("Expected list"),
+        }
+
+        // Blog.owner should reference User (index 0)
+        match &ir.resources[2].fields[1].field_type {
+            IRType::ResourceRef(idx) => assert_eq!(*idx, 0),
+            _ => panic!("Expected ResourceRef"),
+        }
+    }
+
+    #[test]
+    fn test_full_compilation_with_type_resolution() {
+        let schema = r#"
+            resource User { string name }
+            resource Post { User author }
+        "#;
+        let result = compile_schema(schema);
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.ir.resources.len(), 2);
+
+        // Verify Post.author is resolved
+        match &output.ir.resources[1].fields[0].field_type {
+            IRType::ResourceRef(idx) => assert_eq!(*idx, 0),
+            _ => panic!("Expected resolved type"),
+        }
     }
 }
