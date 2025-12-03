@@ -346,7 +346,7 @@ impl Lexer {
         self.advance(); // skip opening quote
         while let Some(ch) = self.current_char() {
             if ch == '"' {
-                self.advance(); // skip closing quote
+                self.advance();
                 break;
             }
             string.push(ch);
@@ -656,8 +656,6 @@ impl Compiler {
                 }
             }
         }
-
-        // TODO: Validate no cyclic dependencies
 
         Ok(Compiler { program })
     }
