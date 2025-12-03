@@ -4,6 +4,18 @@ Is a binary protocol and BFF framework.
 
 Previous is made of a Schema definition, a compiler, client and server utils to help you create complete solutions with one tool.
 
+## Compiler Status
+
+| Phase | Status | Docs |
+|-------|--------|------|
+| 1. AST Construction | ✅ Complete | [README.md](README.md) |
+| 2. Type Resolution + IR | ⏭️ In Progress | [COMPILER_PHASES.md](COMPILER_PHASES.md) |
+| 3. Binary Encoding | 📅 Planned | |
+| 4. Code Generation | 📅 Planned | |
+| 5. CLI | 📅 Planned | |
+
+**Next:** [Phase 2 Tasks](PHASE2_TASKS.md) - Type resolution, IR, and cycle detection
+
 ## Design
 
 Previous is built around `Resource`'s.
