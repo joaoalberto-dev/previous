@@ -1,6 +1,8 @@
 fn main() {
     previous::run();
 
+    // Test 1: Valid schema with no cycles
+    println!("\n=== Test 1: Valid Schema (No Cycles) ===");
     let schema = r#"
         resource User {
             string name
@@ -50,5 +52,48 @@ fn main() {
             }
         }
         Err(e) => eprintln!("Compilation error: {}", e),
+    }
+
+    // Test 2: Schema with a cycle (A → B → A)
+    println!("\n=== Test 2: Schema with Cycle (A ↔ B) ===");
+    let cyclic_schema = r#"
+        resource A {
+            string name
+            B reference
+        }
+        
+        resource B {
+            string title
+            A parent
+        }
+    "#;
+
+    match previous::compile_schema(cyclic_schema) {
+        Ok(_) => {
+            eprintln!("ERROR: Should have detected cycle!");
+        }
+        Err(e) => {
+            println!("✓ Correctly detected cycle:");
+            println!("  Error: {}", e);
+        }
+    }
+
+    // Test 3: Schema with self-reference
+    println!("\n=== Test 3: Schema with Self-Reference (A → A) ===");
+    let self_ref_schema = r#"
+        resource TreeNode {
+            string value
+            list TreeNode children
+        }
+    "#;
+
+    match previous::compile_schema(self_ref_schema) {
+        Ok(_) => {
+            eprintln!("ERROR: Should have detected self-reference!");
+        }
+        Err(e) => {
+            println!("✓ Correctly detected self-reference:");
+            println!("  Error: {}", e);
+        }
     }
 }

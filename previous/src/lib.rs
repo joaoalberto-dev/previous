@@ -715,7 +715,9 @@ impl Compiler {
         let resolver = TypeResolver::new(&self.program)?;
         let ir = resolver.resolve(self.program.clone())?;
 
-        // 3. TODO: Cycle detection in Task 3
+        // 3. Cycle detection
+        let cycle_detector = CycleDetector::build(&ir)?;
+        cycle_detector.detect()?;
 
         // 4. Return compiled IR
         Ok(CompiledOutput { ir })
@@ -808,6 +810,131 @@ impl TypeResolver {
         Ok(IRProgram {
             resources: ir_resources,
         })
+    }
+}
+
+// ============================================================================
+// CYCLE DETECTOR
+// ============================================================================
+
+pub struct CycleDetector {
+    graph: Vec<Vec<usize>>,
+    resource_names: Vec<String>,
+}
+
+impl CycleDetector {
+    /// Build a dependency graph from the IR program
+    ///
+    /// Creates an adjacency list where each node represents a resource
+    /// and edges represent references to other resources.
+    pub fn build(ir: &IRProgram) -> Result<Self, String> {
+        let mut graph = vec![Vec::new(); ir.resources.len()];
+
+        // For each resource and its fields, collect all resource references
+        for (res_idx, resource) in ir.resources.iter().enumerate() {
+            for field in &resource.fields {
+                Self::collect_refs(res_idx, &field.field_type, &mut graph);
+            }
+        }
+
+        // Extract resource names for error reporting
+        let resource_names: Vec<String> = ir.resources.iter().map(|r| r.name.clone()).collect();
+
+        Ok(CycleDetector {
+            graph,
+            resource_names,
+        })
+    }
+
+    /// Helper: extract all resource references from a type recursively
+    ///
+    /// - Primitive types: no references
+    /// - ResourceRef: add edge from current resource to referenced resource
+    /// - List: recursively process inner type
+    fn collect_refs(from_idx: usize, ir_type: &IRType, graph: &mut Vec<Vec<usize>>) {
+        match ir_type {
+            IRType::Primitive(_) => {
+                // No resource references in primitive types
+            }
+            IRType::ResourceRef(to_idx) => {
+                // Add edge: from_idx → to_idx
+                graph[from_idx].push(*to_idx);
+            }
+            IRType::List(inner) => {
+                // Recursively process list inner type
+                Self::collect_refs(from_idx, inner, graph);
+            }
+        }
+    }
+
+    /// Detect cycles in the resource dependency graph
+    ///
+    /// Uses depth-first search with recursion stack tracking.
+    /// If a node is encountered that's already in the current recursion stack,
+    /// a cycle has been found.
+    pub fn detect(&self) -> Result<(), String> {
+        let n = self.graph.len();
+        let mut visited = vec![false; n];
+        let mut rec_stack = vec![false; n];
+        let mut path = Vec::new();
+
+        for i in 0..n {
+            if !visited[i] {
+                self.dfs(i, &mut visited, &mut rec_stack, &mut path)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Depth-first search for cycle detection
+    ///
+    /// Maintains:
+    /// - visited: tracks nodes we've processed
+    /// - rec_stack: tracks nodes in the current path (to detect back edges)
+    /// - path: tracks the current traversal path for error messages
+    fn dfs(
+        &self,
+        node: usize,
+        visited: &mut Vec<bool>,
+        rec_stack: &mut Vec<bool>,
+        path: &mut Vec<usize>,
+    ) -> Result<(), String> {
+        // Mark as visited and in current recursion path
+        visited[node] = true;
+        rec_stack[node] = true;
+        path.push(node);
+
+        // Visit all neighbors
+        for &neighbor in &self.graph[node] {
+            if !visited[neighbor] {
+                // Unvisited neighbor: recurse
+                self.dfs(neighbor, visited, rec_stack, path)?;
+            } else if rec_stack[neighbor] {
+                // Neighbor is in current path: found a cycle!
+                // Extract the cycle from the path
+                let cycle_start = path.iter().position(|&n| n == neighbor).unwrap();
+                let cycle_path = &path[cycle_start..];
+
+                // Convert node indices to names
+                let cycle_names: Vec<String> = cycle_path
+                    .iter()
+                    .map(|&idx| self.resource_names[idx].clone())
+                    .collect();
+
+                // Format error message: A → B → C → A
+                let mut msg = cycle_names.join(" → ");
+                msg.push_str(" → ");
+                msg.push_str(&self.resource_names[neighbor]);
+
+                return Err(format!("Cyclic dependency detected: {}", msg));
+            }
+        }
+
+        // Backtrack: remove from current path
+        path.pop();
+        rec_stack[node] = false;
+        Ok(())
     }
 }
 
@@ -1340,5 +1467,214 @@ mod tests {
             IRType::ResourceRef(idx) => assert_eq!(*idx, 0),
             _ => panic!("Expected resolved type"),
         }
+    }
+
+    // ========================================================================
+    // CYCLE DETECTOR TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_cycle_detector_no_cycles() {
+        let schema = r#"
+            resource User {
+                string name
+                string email
+            }
+            resource Post {
+                string title
+                User author
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cycle_detector_self_reference() {
+        let schema = r#"
+            resource A {
+                list A children
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Cyclic dependency detected"));
+        assert!(err.contains("A"));
+    }
+
+    #[test]
+    fn test_cycle_detector_simple_cycle() {
+        let schema = r#"
+            resource A { B b }
+            resource B { A a }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Cyclic dependency detected"));
+        assert!(err.contains("A"));
+        assert!(err.contains("B"));
+    }
+
+    #[test]
+    fn test_cycle_detector_three_way_cycle() {
+        let schema = r#"
+            resource A { B b }
+            resource B { C c }
+            resource C { A a }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Cyclic dependency detected"));
+    }
+
+    #[test]
+    fn test_cycle_detector_cycle_with_other_resources() {
+        let schema = r#"
+            resource A { B b }
+            resource B { A a }
+            resource C { string data }
+            resource D { C ref }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        // Should detect the A ↔ B cycle
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Cyclic dependency detected"));
+    }
+
+    #[test]
+    fn test_cycle_detector_list_in_cycle() {
+        let schema = r#"
+            resource A { list B items }
+            resource B { A parent }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Cyclic dependency detected"));
+    }
+
+    #[test]
+    fn test_cycle_detector_nested_list_no_cycle() {
+        let schema = r#"
+            resource Item { string name }
+            resource Collection { list list Item items }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        // Nested lists should not create cycles
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_schema_with_cycle_error() {
+        let schema = r#"
+            resource X { Y y }
+            resource Y { X x }
+        "#;
+        let result = compile_schema(schema);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Cyclic dependency detected"));
+    }
+
+    #[test]
+    fn test_compile_schema_without_cycle_success() {
+        let schema = r#"
+            resource User { string name }
+            resource Post { User author }
+            resource Blog { list Post posts }
+        "#;
+        let result = compile_schema(schema);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cycle_error_message_format() {
+        let schema = r#"
+            resource A { B b }
+            resource B { C c }
+            resource C { A a }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Should show the cycle path with arrows
+        assert!(err.contains(" → "));
+    }
+
+    #[test]
+    fn test_cycle_detector_multiple_fields_with_cycle() {
+        let schema = r#"
+            resource A {
+                string name
+                B ref1
+                B ref2
+            }
+            resource B {
+                string title
+                A parent
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let detector = CycleDetector::build(&ir).unwrap();
+        let result = detector.detect();
+
+        assert!(result.is_err());
     }
 }
