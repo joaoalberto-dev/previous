@@ -66,7 +66,7 @@ app.get(`/user/:id`, async () => {
 ```
 
 Client:
-```
+```js
 import { user } from 'previous/generated/client'
 const response = await fetch(`/user/1`).then(user.handle)
 
