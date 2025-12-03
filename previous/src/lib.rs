@@ -242,6 +242,53 @@ pub struct Program {
 }
 
 // ============================================================================
+// IR TYPES (Intermediate Representation)
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IRType {
+    /// Primitive type: "string", "number", "bool"
+    Primitive(String),
+    /// Reference to a resource by index in IRProgram.resources
+    ResourceRef(usize),
+    /// List of zero or more items of the inner type
+    List(Box<IRType>),
+}
+
+#[derive(Debug, Clone)]
+pub struct IRField {
+    pub name: String,
+    pub field_type: IRType,
+    pub nullable: bool,
+    pub optional: bool,
+    pub default: Option<DefaultValue>,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct IRResource {
+    pub name: String,
+    pub fields: Vec<IRField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IRProgram {
+    pub resources: Vec<IRResource>,
+}
+
+impl IRProgram {
+    /// Find a resource by name, returning its index
+    pub fn get_resource_index(&self, name: &str) -> Option<usize> {
+        self.resources.iter().position(|r| r.name == name)
+    }
+
+    /// Find a resource by name
+    pub fn get_resource(&self, name: &str) -> Option<&IRResource> {
+        self.resources.iter().find(|r| r.name == name)
+    }
+}
+
+// ============================================================================
 // TOKEN TYPES
 // ============================================================================
 
@@ -630,6 +677,7 @@ impl Parser {
 // COMPILER
 // ============================================================================
 
+#[allow(dead_code)]
 pub struct Compiler {
     program: Program,
 }
@@ -661,30 +709,24 @@ impl Compiler {
     }
 
     pub fn compile(&self) -> Result<CompiledOutput, String> {
-        let mut output = CompiledOutput::new();
-
-        for resource in &self.program.resources {
-            output.add_resource(resource.clone());
-        }
-
-        Ok(output)
+        // For now, just create empty IR output.
+        // TODO: Implement type resolution and cycle detection in next tasks
+        Ok(CompiledOutput::new())
     }
 }
 
 #[derive(Debug)]
 pub struct CompiledOutput {
-    pub resources: Vec<Resource>,
+    pub ir: IRProgram,
 }
 
 impl CompiledOutput {
     pub fn new() -> Self {
         CompiledOutput {
-            resources: Vec::new(),
+            ir: IRProgram {
+                resources: Vec::new(),
+            },
         }
-    }
-
-    pub fn add_resource(&mut self, resource: Resource) {
-        self.resources.push(resource);
     }
 }
 
@@ -851,5 +893,111 @@ mod tests {
         "#;
         let result = compile_schema(schema);
         assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // IR STRUCTURE TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_ir_type_primitive() {
+        let ir_type = IRType::Primitive("string".to_string());
+        match ir_type {
+            IRType::Primitive(s) => assert_eq!(s, "string"),
+            _ => panic!("Expected primitive"),
+        }
+    }
+
+    #[test]
+    fn test_ir_type_resource_ref() {
+        let ir_type = IRType::ResourceRef(0);
+        match ir_type {
+            IRType::ResourceRef(idx) => assert_eq!(idx, 0),
+            _ => panic!("Expected resource ref"),
+        }
+    }
+
+    #[test]
+    fn test_ir_type_list() {
+        let ir_type = IRType::List(Box::new(IRType::Primitive("string".to_string())));
+        match ir_type {
+            IRType::List(inner) => match *inner {
+                IRType::Primitive(ref s) => assert_eq!(s, "string"),
+                _ => panic!("Expected primitive inner type"),
+            },
+            _ => panic!("Expected list"),
+        }
+    }
+
+    #[test]
+    fn test_ir_type_equality() {
+        let t1 = IRType::Primitive("string".to_string());
+        let t2 = IRType::Primitive("string".to_string());
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn test_ir_program_get_resource_index() {
+        let ir = IRProgram {
+            resources: vec![
+                IRResource {
+                    name: "User".to_string(),
+                    fields: vec![],
+                },
+                IRResource {
+                    name: "Post".to_string(),
+                    fields: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(ir.get_resource_index("User"), Some(0));
+        assert_eq!(ir.get_resource_index("Post"), Some(1));
+        assert_eq!(ir.get_resource_index("Unknown"), None);
+    }
+
+    #[test]
+    fn test_ir_program_get_resource() {
+        let ir = IRProgram {
+            resources: vec![IRResource {
+                name: "User".to_string(),
+                fields: vec![],
+            }],
+        };
+
+        assert!(ir.get_resource("User").is_some());
+        assert!(ir.get_resource("Unknown").is_none());
+    }
+
+    #[test]
+    fn test_ir_field_with_attributes() {
+        let field = IRField {
+            name: "age".to_string(),
+            field_type: IRType::Primitive("number".to_string()),
+            nullable: false,
+            optional: true,
+            default: None,
+            index: 0,
+        };
+
+        assert_eq!(field.name, "age");
+        assert!(field.optional);
+        assert!(!field.nullable);
+    }
+
+    #[test]
+    fn test_ir_field_with_default() {
+        let field = IRField {
+            name: "timeout".to_string(),
+            field_type: IRType::Primitive("number".to_string()),
+            nullable: false,
+            optional: false,
+            default: Some(DefaultValue {
+                value: Literal::Number(10),
+            }),
+            index: 0,
+        };
+
+        assert!(field.default.is_some());
     }
 }

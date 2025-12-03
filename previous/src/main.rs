@@ -29,8 +29,8 @@ fn main() {
     match previous::compile_schema(schema) {
         Ok(output) => {
             println!("\nCompilation successful!");
-            println!("Resources compiled: {}", output.resources.len());
-            for resource in &output.resources {
+            println!("Resources compiled: {}", output.ir.resources.len());
+            for resource in &output.ir.resources {
                 println!("\nResource: {}", resource.name);
                 for field in &resource.fields {
                     println!(
