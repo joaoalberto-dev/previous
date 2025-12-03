@@ -197,6 +197,661 @@
         <bool_literal> ::= "true" | "false"
 */
 
+// ============================================================================
+// AST TYPES
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ASTType {
+    Primitive(String),
+    Named(String),
+    List(Box<ASTType>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Literal {
+    String(String),
+    Number(i64),
+    Bool(bool),
+}
+
+#[derive(Debug, Clone)]
+pub struct DefaultValue {
+    pub value: Literal,
+}
+
+#[derive(Debug, Clone)]
+pub struct Field {
+    pub name: String,
+    pub field_type: ASTType,
+    pub nullable: bool,
+    pub optional: bool,
+    pub default: Option<DefaultValue>,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Resource {
+    pub name: String,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Program {
+    pub resources: Vec<Resource>,
+}
+
+// ============================================================================
+// TOKEN TYPES
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    // Keywords
+    Resource,
+    String,
+    Number,
+    Bool,
+    Nullable,
+    Optional,
+    Default,
+    List,
+    True,
+    False,
+
+    // Identifiers and literals
+    Identifier(String),
+    StringLiteral(String),
+    NumberLiteral(i64),
+
+    // Symbols
+    LeftBrace,
+    RightBrace,
+    LeftParen,
+    RightParen,
+
+    // Special
+    Eof,
+}
+
+// ============================================================================
+// LEXER
+// ============================================================================
+
+#[derive(Debug)]
+pub struct Lexer {
+    input: Vec<char>,
+    position: usize,
+}
+
+impl Lexer {
+    pub fn new(input: &str) -> Self {
+        Lexer {
+            input: input.chars().collect(),
+            position: 0,
+        }
+    }
+
+    fn current_char(&self) -> Option<char> {
+        if self.position < self.input.len() {
+            Some(self.input[self.position])
+        } else {
+            None
+        }
+    }
+
+    #[allow(dead_code)]
+    fn peek_char(&self, offset: usize) -> Option<char> {
+        let pos = self.position + offset;
+        if pos < self.input.len() {
+            Some(self.input[pos])
+        } else {
+            None
+        }
+    }
+
+    fn advance(&mut self) -> Option<char> {
+        let ch = self.current_char();
+        if ch.is_some() {
+            self.position += 1;
+        }
+        ch
+    }
+
+    fn skip_whitespace(&mut self) {
+        while let Some(ch) = self.current_char() {
+            if ch.is_whitespace() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn read_identifier(&mut self) -> String {
+        let mut ident = String::new();
+        while let Some(ch) = self.current_char() {
+            if ch.is_alphanumeric() || ch == '_' {
+                ident.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        ident
+    }
+
+    fn read_string(&mut self) -> String {
+        let mut string = String::new();
+        self.advance(); // skip opening quote
+        while let Some(ch) = self.current_char() {
+            if ch == '"' {
+                self.advance(); // skip closing quote
+                break;
+            }
+            string.push(ch);
+            self.advance();
+        }
+        string
+    }
+
+    fn read_number(&mut self) -> i64 {
+        let mut num_str = String::new();
+        while let Some(ch) = self.current_char() {
+            if ch.is_ascii_digit() {
+                num_str.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        num_str.parse().unwrap_or(0)
+    }
+
+    pub fn next_token(&mut self) -> Token {
+        self.skip_whitespace();
+
+        match self.current_char() {
+            None => Token::Eof,
+            Some('{') => {
+                self.advance();
+                Token::LeftBrace
+            }
+            Some('}') => {
+                self.advance();
+                Token::RightBrace
+            }
+            Some('(') => {
+                self.advance();
+                Token::LeftParen
+            }
+            Some(')') => {
+                self.advance();
+                Token::RightParen
+            }
+            Some('"') => {
+                let string = self.read_string();
+                Token::StringLiteral(string)
+            }
+            Some(ch) if ch.is_ascii_digit() => {
+                let num = self.read_number();
+                Token::NumberLiteral(num)
+            }
+            Some(ch) if ch.is_alphabetic() || ch == '_' => {
+                let ident = self.read_identifier();
+                match ident.as_str() {
+                    "resource" => Token::Resource,
+                    "string" => Token::String,
+                    "number" => Token::Number,
+                    "bool" => Token::Bool,
+                    "nullable" => Token::Nullable,
+                    "optional" => Token::Optional,
+                    "default" => Token::Default,
+                    "list" => Token::List,
+                    "true" => Token::True,
+                    "false" => Token::False,
+                    _ => Token::Identifier(ident),
+                }
+            }
+            Some(_) => {
+                self.advance();
+                self.next_token()
+            }
+        }
+    }
+}
+
+// ============================================================================
+// PARSER
+// ============================================================================
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    position: usize,
+}
+
+impl Parser {
+    pub fn new(input: &str) -> Self {
+        let mut lexer = Lexer::new(input);
+        let mut tokens = Vec::new();
+
+        loop {
+            let token = lexer.next_token();
+            if token == Token::Eof {
+                tokens.push(token);
+                break;
+            }
+            tokens.push(token);
+        }
+
+        Parser {
+            tokens,
+            position: 0,
+        }
+    }
+
+    fn current_token(&self) -> &Token {
+        self.tokens.get(self.position).unwrap_or(&Token::Eof)
+    }
+
+    #[allow(dead_code)]
+    fn peek_token(&self, offset: usize) -> &Token {
+        self.tokens
+            .get(self.position + offset)
+            .unwrap_or(&Token::Eof)
+    }
+
+    fn advance(&mut self) -> Token {
+        let token = self.current_token().clone();
+        if self.position < self.tokens.len() {
+            self.position += 1;
+        }
+        token
+    }
+
+    fn expect(&mut self, expected: Token) -> Result<(), String> {
+        let current = self.current_token();
+        let matches = match (&expected, current) {
+            (Token::Resource, Token::Resource) => true,
+            (Token::LeftBrace, Token::LeftBrace) => true,
+            (Token::RightBrace, Token::RightBrace) => true,
+            (Token::LeftParen, Token::LeftParen) => true,
+            (Token::RightParen, Token::RightParen) => true,
+            _ => std::mem::discriminant(&expected) == std::mem::discriminant(current),
+        };
+        if matches {
+            self.advance();
+            Ok(())
+        } else {
+            Err(format!("Expected {:?}, got {:?}", expected, current))
+        }
+    }
+
+    pub fn parse(&mut self) -> Result<Program, String> {
+        let mut resources = Vec::new();
+
+        while self.current_token() != &Token::Eof {
+            let resource = self.parse_resource()?;
+            resources.push(resource);
+        }
+
+        Ok(Program { resources })
+    }
+
+    fn parse_resource(&mut self) -> Result<Resource, String> {
+        self.expect(Token::Resource)?;
+
+        let name = match self.advance() {
+            Token::Identifier(id) => id,
+            _ => return Err("Expected resource name".to_string()),
+        };
+
+        // Validate PascalCase
+        if !name.chars().next().unwrap().is_uppercase() {
+            return Err(format!("Resource name must be PascalCase: {}", name));
+        }
+
+        self.expect(Token::LeftBrace)?;
+
+        let mut fields = Vec::new();
+        let mut index = 0;
+
+        while self.current_token() != &Token::RightBrace && self.current_token() != &Token::Eof {
+            let field = self.parse_field(index)?;
+            fields.push(field);
+            index += 1;
+        }
+
+        self.expect(Token::RightBrace)?;
+
+        Ok(Resource { name, fields })
+    }
+
+    fn parse_field(&mut self, index: usize) -> Result<Field, String> {
+        let mut nullable = false;
+        let mut optional = false;
+        let mut default = None;
+
+        // Parse attributes
+        loop {
+            match self.current_token() {
+                Token::Nullable => {
+                    nullable = true;
+                    self.advance();
+                }
+                Token::Optional => {
+                    optional = true;
+                    self.advance();
+                }
+                Token::Default => {
+                    self.advance();
+                    self.expect(Token::LeftParen)?;
+                    let literal = self.parse_literal()?;
+                    self.expect(Token::RightParen)?;
+                    default = Some(DefaultValue { value: literal });
+                }
+                _ => break,
+            }
+        }
+
+        // Parse type
+        let field_type = self.parse_type()?;
+
+        // Parse identifier
+        let name = match self.advance() {
+            Token::Identifier(id) => id,
+            _ => return Err("Expected field name".to_string()),
+        };
+
+        Ok(Field {
+            name,
+            field_type,
+            nullable,
+            optional,
+            default,
+            index,
+        })
+    }
+
+    fn parse_type(&mut self) -> Result<ASTType, String> {
+        match self.current_token() {
+            Token::String => {
+                self.advance();
+                Ok(ASTType::Primitive("string".to_string()))
+            }
+            Token::Number => {
+                self.advance();
+                Ok(ASTType::Primitive("number".to_string()))
+            }
+            Token::Bool => {
+                self.advance();
+                Ok(ASTType::Primitive("bool".to_string()))
+            }
+            Token::List => {
+                self.advance();
+                let inner_type = self.parse_type()?;
+                Ok(ASTType::List(Box::new(inner_type)))
+            }
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                Ok(ASTType::Named(name))
+            }
+            _ => Err(format!("Expected type, got {:?}", self.current_token())),
+        }
+    }
+
+    fn parse_literal(&mut self) -> Result<Literal, String> {
+        match self.current_token() {
+            Token::StringLiteral(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(Literal::String(s))
+            }
+            Token::NumberLiteral(n) => {
+                let n = *n;
+                self.advance();
+                Ok(Literal::Number(n))
+            }
+            Token::True => {
+                self.advance();
+                Ok(Literal::Bool(true))
+            }
+            Token::False => {
+                self.advance();
+                Ok(Literal::Bool(false))
+            }
+            _ => Err(format!("Expected literal, got {:?}", self.current_token())),
+        }
+    }
+}
+
+// ============================================================================
+// COMPILER
+// ============================================================================
+
+pub struct Compiler {
+    program: Program,
+}
+
+impl Compiler {
+    pub fn new(program: Program) -> Result<Self, String> {
+        // Validate uniqueness of resource names
+        let mut resource_names = std::collections::HashSet::new();
+        for resource in &program.resources {
+            if !resource_names.insert(resource.name.clone()) {
+                return Err(format!("Duplicate resource name: {}", resource.name));
+            }
+        }
+
+        // Validate uniqueness of field names within each resource
+        for resource in &program.resources {
+            let mut field_names = std::collections::HashSet::new();
+            for field in &resource.fields {
+                if !field_names.insert(field.name.clone()) {
+                    return Err(format!(
+                        "Duplicate field name in {}: {}",
+                        resource.name, field.name
+                    ));
+                }
+            }
+        }
+
+        // TODO: Validate no cyclic dependencies
+
+        Ok(Compiler { program })
+    }
+
+    pub fn compile(&self) -> Result<CompiledOutput, String> {
+        let mut output = CompiledOutput::new();
+
+        for resource in &self.program.resources {
+            output.add_resource(resource.clone());
+        }
+
+        Ok(output)
+    }
+}
+
+#[derive(Debug)]
+pub struct CompiledOutput {
+    pub resources: Vec<Resource>,
+}
+
+impl CompiledOutput {
+    pub fn new() -> Self {
+        CompiledOutput {
+            resources: Vec::new(),
+        }
+    }
+
+    pub fn add_resource(&mut self, resource: Resource) {
+        self.resources.push(resource);
+    }
+}
+
+// ============================================================================
+// PUBLIC API
+// ============================================================================
+
 pub fn run() {
-    println!("Previous");
+    println!("Previous Compiler v0.1.0");
+}
+
+pub fn parse_schema(input: &str) -> Result<Program, String> {
+    let mut parser = Parser::new(input);
+    parser.parse()
+}
+
+pub fn compile_schema(input: &str) -> Result<CompiledOutput, String> {
+    let program = parse_schema(input)?;
+    let compiler = Compiler::new(program)?;
+    compiler.compile()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_simple_resource() {
+        let schema = "resource User { string name }";
+        let result = parse_schema(schema);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        assert_eq!(program.resources.len(), 1);
+        assert_eq!(program.resources[0].name, "User");
+        assert_eq!(program.resources[0].fields.len(), 1);
+        assert_eq!(program.resources[0].fields[0].name, "name");
+    }
+
+    #[test]
+    fn test_parse_multiple_fields() {
+        let schema = r#"
+            resource User {
+                string name
+                string email
+                number age
+                bool active
+            }
+        "#;
+        let result = parse_schema(schema);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        assert_eq!(program.resources[0].fields.len(), 4);
+    }
+
+    #[test]
+    fn test_parse_optional_field() {
+        let schema = "resource User { optional string name }";
+        let result = parse_schema(schema);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        assert!(program.resources[0].fields[0].optional);
+        assert!(!program.resources[0].fields[0].nullable);
+    }
+
+    #[test]
+    fn test_parse_nullable_field() {
+        let schema = "resource Settings { nullable bool notifications }";
+        let result = parse_schema(schema);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        assert!(program.resources[0].fields[0].nullable);
+        assert!(!program.resources[0].fields[0].optional);
+    }
+
+    #[test]
+    fn test_parse_default_value() {
+        let schema = "resource Config { default(10) number timeout }";
+        let result = parse_schema(schema);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        assert!(program.resources[0].fields[0].default.is_some());
+    }
+
+    #[test]
+    fn test_parse_list_type() {
+        let schema = "resource Names { list string names }";
+        let result = parse_schema(schema);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        match &program.resources[0].fields[0].field_type {
+            ASTType::List(inner) => {
+                assert_eq!(**inner, ASTType::Primitive("string".to_string()));
+            }
+            _ => panic!("Expected list type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_named_type() {
+        let schema = r#"
+            resource User { string name }
+            resource Users { list User users }
+        "#;
+        let result = parse_schema(schema);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        match &program.resources[1].fields[0].field_type {
+            ASTType::List(inner) => {
+                assert_eq!(**inner, ASTType::Named("User".to_string()));
+            }
+            _ => panic!("Expected list of named type"),
+        }
+    }
+
+    #[test]
+    fn test_duplicate_resource_names() {
+        let schema = r#"
+            resource User { string name }
+            resource User { string email }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let result = Compiler::new(program);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_duplicate_field_names() {
+        let schema = "resource User { string name string name }";
+        let program = parse_schema(schema).unwrap();
+        let result = Compiler::new(program);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_field_indexing() {
+        let schema = r#"
+            resource User {
+                string name
+                string email
+                number age
+            }
+        "#;
+        let result = parse_schema(schema);
+        let program = result.unwrap();
+        for (i, field) in program.resources[0].fields.iter().enumerate() {
+            assert_eq!(field.index, i);
+        }
+    }
+
+    #[test]
+    fn test_pascal_case_validation() {
+        let schema = "resource user { string name }";
+        let result = parse_schema(schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compile_schema() {
+        let schema = r#"
+            resource User {
+                string name
+                optional number age
+            }
+        "#;
+        let result = compile_schema(schema);
+        assert!(result.is_ok());
+    }
 }
