@@ -34,11 +34,26 @@ All commands must be run from the `previous/` directory (where Cargo.toml is loc
 # Build the project
 cargo build
 
-# Run all tests (41 tests across all compiler phases)
+# Run all tests (69 tests across all compiler phases)
 cargo test
 
-# Run the demo (shows 3 test cases: valid schema, cycle detection, self-reference)
+# Run the CLI tool (shows help or runs demo)
 cargo run
+
+# Run demo mode
+cargo run -- demo
+
+# Compile a schema file
+cargo run -- examples/user.pr --out ./generated
+
+# Compile with verbose output
+cargo run -- examples/user.pr --out ./test_output --verbose
+
+# Show help
+cargo run -- --help
+
+# Show version
+cargo run -- version
 
 # Run tests with output
 cargo test -- --nocaptures
@@ -49,7 +64,7 @@ cargo check
 
 ## Compiler Architecture
 
-The compiler follows a 5-phase pipeline (Phases 1-4 are complete):
+The compiler follows a complete 5-phase pipeline (all phases complete ✅):
 
 ### Phase 1: AST Construction ✅
 - **Lexer**: Tokenizes input (.pr files)
@@ -100,8 +115,20 @@ The compiler follows a 5-phase pipeline (Phases 1-4 are complete):
   - Debug and Clone derives
 - **Output**: TypeScript client code + Rust server code ready for deployment
 
-### Phase 5: CLI (Planned)
-File I/O, .pr file reading, --out directory support.
+### Phase 5: CLI & File I/O ✅
+- **Command-Line Tool**: Full-featured CLI with clap
+- **Commands**:
+  - `previouscc <file.pr> --out ./generated` - Compile schema file
+  - `previouscc compile <file.pr>` - Explicit compile subcommand
+  - `previouscc demo` - Run interactive demo
+  - `previouscc version` - Show version info
+- **File I/O**:
+  - Read .pr files from filesystem
+  - Write client.ts (TypeScript client)
+  - Write server.rs (Rust server)
+  - Auto-create output directories
+- **Error Handling**: Clear messages with file context
+- **Output**: Production-ready files on disk
 
 ## Key Data Structures
 
@@ -232,10 +259,12 @@ resource Counter {
 12. Test module (69 tests)
 
 ### When modifying the compiler:
-- The compilation pipeline is: Lexer → Parser → AST Validation → TypeResolver → CycleDetector → IR → BinaryEncoder → CodeGenerator
+- The compilation pipeline is: CLI → File I/O → Lexer → Parser → AST Validation → TypeResolver → CycleDetector → IR → BinaryEncoder → CodeGenerator → File Writing
 - All phases must complete successfully for compilation to succeed
-- Error messages should be clear and include context (resource names, cycle paths, type mismatches, etc.)
+- Error messages should be clear and include context (resource names, cycle paths, type mismatches, file paths, etc.)
 - Always run `cargo test` to ensure all 69 tests pass
-- The demo in `main.rs` exercises 5 critical paths: valid compilation, code generation output, binary encoding, cycle detection, self-reference detection
+- The CLI in `main.rs` provides multiple modes: compile (reads/writes files), demo (in-memory examples), version, help
+- File I/O functions are in lib.rs: `compile_file()`, `compile_file_to_output()`, `write_generated_code()`
 - Binary encoding requires creating `Value` instances that match the IR types - type mismatches will error
 - Code generation produces TypeScript client and Rust server code in `CompiledOutput.generated_code`
+- Generated files are written to the output directory specified via --out flag (default: ./generated)

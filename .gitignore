@@ -7,3 +7,4 @@ target
 # Editors
 .idea/
 .vscode/
+generated

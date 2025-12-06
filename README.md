@@ -12,9 +12,22 @@ Previous is made of a Schema definition, a compiler, client and server utils to 
 | 2. Type Resolution + IR | ✅ Complete | [PHASE2_COMPLETE.md](PHASE2_COMPLETE.md) |
 | 3. Binary Encoding | ✅ Complete | [PHASE3_COMPLETE.md](PHASE3_COMPLETE.md) |
 | 4. Code Generation | ✅ Complete | [PHASE4_COMPLETE.md](PHASE4_COMPLETE.md) |
-| 5. CLI | 📅 Planned | |
+| 5. CLI & File I/O | ✅ Complete | [PHASE5_COMPLETE.md](PHASE5_COMPLETE.md) |
 
-**Latest:** [Phase 4 Complete](PHASE4_COMPLETE.md) - TypeScript client + Rust server code generation with 12 new tests
+**🎉 PROJECT COMPLETE!** All 5 phases implemented. The Previous compiler is production-ready!
+
+## Quick Start
+
+```bash
+# Compile a schema file
+cargo run -- examples/user.pr --out ./generated
+
+# Run demo
+cargo run -- demo
+
+# Show help
+cargo run -- --help
+```
 
 ## Design
 
@@ -51,42 +64,42 @@ resource Notification {
 }
 ```
 
-This will then be translated to both server and client code after the schema compilation
+This will be compiled to TypeScript and Rust code using the Previous compiler:
 
-Server:
-```js
-// You can create the Resource with the expected fields
-const user = new User({
-    name:   'Jhon',
-    email:  'jhon@email.com',
-    age:    30,
-    active: false
-})
-
-// Or build then in steps
-const user = new User()
-user.setField('name', 'Jhon')
-user.setField('email', 'jhon@email.com')
-user.setField('age', 30)
-user.setField('active', false)
-
-// Then send it to the client
-app.get(`/user/:id`, async () => {
-    // ... user creation
-    return user.build()
-})
+```bash
+# Compile the schema
+previouscc schema.pr --out ./generated
 ```
 
-Client:
-```js
-import { user } from 'previous/generated/client'
-const response = await fetch(`/user/1`).then(user.handle)
+**Generated TypeScript Client:**
+```typescript
+import { User } from './generated/client';
 
-console.log(response.error)                   // null
-console.log(response.data)                    // binary user data not serialized to json
-console.log(response.data.getField('name'))   // Lazy parsed user name
-console.log(response.data.getField('email'))  // Lazy parsed user email
-console.log(response.data.getField('age'))    // Lazy parsed user age
-console.log(response.data.getField('active')) // Lazy parsed user active
-console.log(response.data.toJson())           // Lazy json parsing
+const response = await fetch('/api/user/1');
+const buffer = await response.arrayBuffer();
+const user = new User(new Uint8Array(buffer));
+
+console.log(user.getName());    // Lazy parsed
+console.log(user.getEmail());   // Lazy parsed
+console.log(user.toJSON());     // Full JSON conversion
 ```
+
+**Generated Rust Server:**
+```rust
+use generated::User;
+
+// Build user with builder pattern
+let user = User::new()
+    .name("Jhon".to_string())
+    .email("jhon@email.com".to_string())
+    .age(Some(30))
+    .active(false);
+
+// Encode to binary
+let binary_data = user.encode(&ir_program)?;
+
+// Send to client
+Ok(Response::new(binary_data))
+```
+
+The Previous compiler handles all the serialization/deserialization automatically. The binary protocol is more efficient than JSON while maintaining type safety on both client and server.

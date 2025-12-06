@@ -1,0 +1,10 @@
+resource User {
+    string name
+    string email
+    optional number age
+    bool active
+}
+
+resource UserList {
+    list User users
+}

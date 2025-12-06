@@ -1,0 +1,24 @@
+resource Author {
+    string name
+    string email
+    nullable string bio
+}
+
+resource Post {
+    string title
+    string content
+    Author author
+    number timestamp
+    list string tags
+}
+
+resource Comment {
+    string text
+    string authorName
+    number timestamp
+}
+
+resource PostWithComments {
+    Post post
+    list Comment comments
+}

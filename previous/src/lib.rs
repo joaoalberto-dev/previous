@@ -1546,6 +1546,168 @@ pub fn compile_schema(input: &str) -> Result<CompiledOutput, String> {
     compiler.compile()
 }
 
+// ============================================================================
+// CLI & FILE I/O (Phase 5)
+// ============================================================================
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// CLI options for the Previous compiler
+#[derive(Debug, Clone)]
+pub struct CliOptions {
+    pub input_file: PathBuf,
+    pub output_dir: PathBuf,
+    pub verbose: bool,
+}
+
+impl Default for CliOptions {
+    fn default() -> Self {
+        CliOptions {
+            input_file: PathBuf::from("schema.pr"),
+            output_dir: PathBuf::from("./generated"),
+            verbose: false,
+        }
+    }
+}
+
+/// Compile a schema file and write generated code to files
+pub fn compile_file(options: &CliOptions) -> Result<(), String> {
+    // Read the input file
+    let schema_content = fs::read_to_string(&options.input_file)
+        .map_err(|e| format!("Failed to read input file '{}': {}", options.input_file.display(), e))?;
+
+    if options.verbose {
+        eprintln!("Reading schema from: {}", options.input_file.display());
+    }
+
+    // Compile the schema
+    let output = compile_schema(&schema_content)?;
+
+    if options.verbose {
+        eprintln!("Compilation successful!");
+        eprintln!("  Resources: {}", output.ir.resources.len());
+        eprintln!("  TypeScript lines: {}", output.generated_code.typescript_client.lines().count());
+        eprintln!("  Rust lines: {}", output.generated_code.rust_server.lines().count());
+    }
+
+    // Create output directory if it doesn't exist
+    fs::create_dir_all(&options.output_dir)
+        .map_err(|e| format!("Failed to create output directory '{}': {}", options.output_dir.display(), e))?;
+
+    // Write TypeScript client
+    let ts_path = options.output_dir.join("client.ts");
+    fs::write(&ts_path, &output.generated_code.typescript_client)
+        .map_err(|e| format!("Failed to write TypeScript file '{}': {}", ts_path.display(), e))?;
+
+    if options.verbose {
+        eprintln!("  Generated: {}", ts_path.display());
+    }
+
+    // Write Rust server
+    let rust_path = options.output_dir.join("server.rs");
+    fs::write(&rust_path, &output.generated_code.rust_server)
+        .map_err(|e| format!("Failed to write Rust file '{}': {}", rust_path.display(), e))?;
+
+    if options.verbose {
+        eprintln!("  Generated: {}", rust_path.display());
+    }
+
+    Ok(())
+}
+
+/// Compile a schema file and return the output (for testing/library use)
+pub fn compile_file_to_output(input_path: &Path) -> Result<CompiledOutput, String> {
+    let schema_content = fs::read_to_string(input_path)
+        .map_err(|e| format!("Failed to read input file '{}': {}", input_path.display(), e))?;
+
+    compile_schema(&schema_content)
+}
+
+/// Write generated code to files
+pub fn write_generated_code(
+    generated_code: &GeneratedCode,
+    output_dir: &Path,
+) -> Result<(), String> {
+    // Create output directory
+    fs::create_dir_all(output_dir)
+        .map_err(|e| format!("Failed to create output directory '{}': {}", output_dir.display(), e))?;
+
+    // Write TypeScript
+    let ts_path = output_dir.join("client.ts");
+    fs::write(&ts_path, &generated_code.typescript_client)
+        .map_err(|e| format!("Failed to write TypeScript file: {}", e))?;
+
+    // Write Rust
+    let rust_path = output_dir.join("server.rs");
+    fs::write(&rust_path, &generated_code.rust_server)
+        .map_err(|e| format!("Failed to write Rust file: {}", e))?;
+
+    Ok(())
+}
+
+/// Enhanced error type with file location context
+#[derive(Debug, Clone)]
+pub struct CompileError {
+    pub message: String,
+    pub file: Option<PathBuf>,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+}
+
+impl CompileError {
+    pub fn new(message: String) -> Self {
+        CompileError {
+            message,
+            file: None,
+            line: None,
+            column: None,
+        }
+    }
+
+    pub fn with_file(mut self, file: PathBuf) -> Self {
+        self.file = Some(file);
+        self
+    }
+
+    pub fn with_location(mut self, line: usize, column: usize) -> Self {
+        self.line = Some(line);
+        self.column = Some(column);
+        self
+    }
+
+    pub fn format(&self) -> String {
+        let mut msg = String::new();
+
+        if let Some(file) = &self.file {
+            msg.push_str(&format!("Error in {}", file.display()));
+            if let (Some(line), Some(col)) = (self.line, self.column) {
+                msg.push_str(&format!(" at line {}, column {}", line, col));
+            } else if let Some(line) = self.line {
+                msg.push_str(&format!(" at line {}", line));
+            }
+            msg.push_str(": ");
+        } else {
+            msg.push_str("Error: ");
+        }
+
+        msg.push_str(&self.message);
+        msg
+    }
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.format())
+    }
+}
+
+impl From<String> for CompileError {
+    fn from(message: String) -> Self {
+        CompileError::new(message)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
