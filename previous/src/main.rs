@@ -51,6 +51,27 @@ fn main() {
                 }
             }
 
+            // Code Generation Demo
+            println!("\n--- Code Generation Demo ---");
+            println!("Generated {} TypeScript lines", output.generated_code.typescript_client.lines().count());
+            println!("Generated {} Rust lines\n", output.generated_code.rust_server.lines().count());
+
+            // Show sample of TypeScript client
+            println!("TypeScript Client Sample (User resource):");
+            let ts_lines: Vec<&str> = output.generated_code.typescript_client.lines().collect();
+            let user_start = ts_lines.iter().position(|l| l.contains("export interface IUser")).unwrap_or(0);
+            for line in &ts_lines[user_start..user_start.min(ts_lines.len()).saturating_add(15).min(ts_lines.len())] {
+                println!("{}", line);
+            }
+
+            // Show sample of Rust server
+            println!("\nRust Server Sample (User resource):");
+            let rust_lines: Vec<&str> = output.generated_code.rust_server.lines().collect();
+            let rust_user_start = rust_lines.iter().position(|l| l.contains("pub struct User")).unwrap_or(0);
+            for line in &rust_lines[rust_user_start..rust_user_start.min(rust_lines.len()).saturating_add(20).min(rust_lines.len())] {
+                println!("{}", line);
+            }
+
             // Binary Encoding Demo
             println!("\n--- Binary Encoding Demo ---");
             let user_value = previous::Value::Resource(vec![

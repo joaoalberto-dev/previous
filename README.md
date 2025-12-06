@@ -11,10 +11,10 @@ Previous is made of a Schema definition, a compiler, client and server utils to 
 | 1. AST Construction | ✅ Complete | [README.md](README.md) |
 | 2. Type Resolution + IR | ✅ Complete | [PHASE2_COMPLETE.md](PHASE2_COMPLETE.md) |
 | 3. Binary Encoding | ✅ Complete | [PHASE3_COMPLETE.md](PHASE3_COMPLETE.md) |
-| 4. Code Generation | 📅 Planned | |
+| 4. Code Generation | ✅ Complete | [PHASE4_COMPLETE.md](PHASE4_COMPLETE.md) |
 | 5. CLI | 📅 Planned | |
 
-**Latest:** [Phase 3 Complete](PHASE3_COMPLETE.md) - Binary encoding model with 16 new tests
+**Latest:** [Phase 4 Complete](PHASE4_COMPLETE.md) - TypeScript client + Rust server code generation with 12 new tests
 
 ## Design
 

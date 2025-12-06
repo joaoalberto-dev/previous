@@ -49,7 +49,7 @@ cargo check
 
 ## Compiler Architecture
 
-The compiler follows a 5-phase pipeline (Phases 1-3 are complete):
+The compiler follows a 5-phase pipeline (Phases 1-4 are complete):
 
 ### Phase 1: AST Construction ✅
 - **Lexer**: Tokenizes input (.pr files)
@@ -82,8 +82,23 @@ The compiler follows a 5-phase pipeline (Phases 1-3 are complete):
 - **Type Safety**: Runtime validation of values against IR types
 - **Output**: Binary data (`Vec<u8>`) ready for transmission
 
-### Phase 4: Code Generation (Planned)
-Generate TypeScript client and Rust server code with serializers/deserializers.
+### Phase 4: Code Generation ✅
+- **CodeGenerator**: Transforms IR into production code
+- **TypeScript Client**:
+  - Interface definitions for each resource
+  - BinaryReader utility for deserialization
+  - Resource classes with lazy field access
+  - Getter methods (getName(), getAge(), etc.)
+  - toJSON() for debugging
+  - Full type safety with proper TypeScript annotations
+- **Rust Server**:
+  - Type-safe struct definitions
+  - Builder pattern for fluent construction
+  - encode() method for binary serialization
+  - to_value() for runtime conversion
+  - Option<T> for nullable/optional fields
+  - Debug and Clone derives
+- **Output**: TypeScript client code + Rust server code ready for deployment
 
 ### Phase 5: CLI (Planned)
 File I/O, .pr file reading, --out directory support.
@@ -170,12 +185,13 @@ resource Counter {
 
 ## Testing
 
-**Test count:** 57 tests (all passing)
+**Test count:** 69 tests (all passing)
 - 12 tests for Phase 1 (parsing, AST construction)
 - 8 tests for IR structures
 - 12 tests for TypeResolver
 - 11 tests for CycleDetector
 - 16 tests for BinaryEncoder (Phase 3)
+- 12 tests for CodeGenerator (Phase 4)
 
 ### Test categories:
 1. **Parse/AST tests**: Simple resources, multiple fields, attributes, lists
@@ -183,17 +199,19 @@ resource Counter {
 3. **Type resolution tests**: Primitives, named types, lists, nested lists, undefined types
 4. **Cycle detection tests**: Self-reference, simple cycles, deep cycles, DAG validation
 5. **Binary encoding tests**: Primitives, lists, nullable, optional, resources, nested resources, type validation
+6. **Code generation tests**: TypeScript interfaces/classes, Rust structs/impls, optional/nullable, lists, nested resources, builder pattern, imports/headers
 
 ## Development Notes
 
 ### Where to find things:
-- **All compiler code**: `previous/src/lib.rs` (single file, ~1900 lines)
+- **All compiler code**: `previous/src/lib.rs` (single file, ~2500 lines)
 - **Lexer**: `Lexer` struct and `Token` enum
 - **Parser**: `Parser` struct with recursive descent methods
 - **AST**: `Program`, `Resource`, `Field`, `ASTType` structs
 - **IR**: `IRProgram`, `IRResource`, `IRField`, `IRType` structs
 - **Value types**: `Value`, `FieldValue` enums/structs (Phase 3)
 - **Binary encoding**: `BinaryEncoder` struct (Phase 3)
+- **Code generation**: `CodeGenerator`, `GeneratedCode` structs (Phase 4)
 - **Type resolution**: `TypeResolver` struct
 - **Cycle detection**: `CycleDetector` struct with DFS algorithm
 - **Compiler orchestration**: `Compiler` struct and `compile_schema()` function
@@ -204,18 +222,20 @@ resource Counter {
 2. AST type definitions
 3. IR type definitions
 4. Binary encoding model (Value, FieldValue, BinaryEncoder)
-5. Lexer implementation
-6. Parser implementation
-7. TypeResolver implementation
-8. CycleDetector implementation
-9. Compiler implementation
-10. Public API functions
-11. Test module (57 tests)
+5. Code generation (CodeGenerator, TypeScript/Rust templates)
+6. Lexer implementation
+7. Parser implementation
+8. TypeResolver implementation
+9. CycleDetector implementation
+10. Compiler implementation
+11. Public API functions
+12. Test module (69 tests)
 
 ### When modifying the compiler:
-- The compilation pipeline is: Lexer → Parser → AST Validation → TypeResolver → CycleDetector → IR → BinaryEncoder
+- The compilation pipeline is: Lexer → Parser → AST Validation → TypeResolver → CycleDetector → IR → BinaryEncoder → CodeGenerator
 - All phases must complete successfully for compilation to succeed
 - Error messages should be clear and include context (resource names, cycle paths, type mismatches, etc.)
-- Always run `cargo test` to ensure all 57 tests pass
-- The demo in `main.rs` exercises 4 critical paths: valid compilation, binary encoding, cycle detection, self-reference detection
+- Always run `cargo test` to ensure all 69 tests pass
+- The demo in `main.rs` exercises 5 critical paths: valid compilation, code generation output, binary encoding, cycle detection, self-reference detection
 - Binary encoding requires creating `Value` instances that match the IR types - type mismatches will error
+- Code generation produces TypeScript client and Rust server code in `CompiledOutput.generated_code`
