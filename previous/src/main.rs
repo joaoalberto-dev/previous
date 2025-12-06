@@ -1,7 +1,7 @@
 fn main() {
     previous::run();
 
-    // Test 1: Valid schema with no cycles
+    // Test 1: Valid schema with no cycles + Binary Encoding Demo
     println!("\n=== Test 1: Valid Schema (No Cycles) ===");
     let schema = r#"
         resource User {
@@ -49,6 +49,45 @@ fn main() {
                         }
                     );
                 }
+            }
+
+            // Binary Encoding Demo
+            println!("\n--- Binary Encoding Demo ---");
+            let user_value = previous::Value::Resource(vec![
+                previous::FieldValue {
+                    name: "name".to_string(),
+                    value: previous::Value::String("Alice".to_string()),
+                    is_optional: false,
+                    is_nullable: false,
+                },
+                previous::FieldValue {
+                    name: "email".to_string(),
+                    value: previous::Value::String("alice@example.com".to_string()),
+                    is_optional: false,
+                    is_nullable: false,
+                },
+                previous::FieldValue {
+                    name: "age".to_string(),
+                    value: previous::Value::Number(30),
+                    is_optional: true,
+                    is_nullable: false,
+                },
+                previous::FieldValue {
+                    name: "active".to_string(),
+                    value: previous::Value::Bool(true),
+                    is_optional: false,
+                    is_nullable: false,
+                },
+            ]);
+
+            let mut encoder = previous::BinaryEncoder::new();
+            match encoder.encode_value(&user_value, &previous::IRType::ResourceRef(0), &output.ir) {
+                Ok(_) => {
+                    let bytes = encoder.finish();
+                    println!("Encoded User resource to {} bytes", bytes.len());
+                    println!("Binary data (hex): {}", bytes.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+                }
+                Err(e) => eprintln!("Encoding error: {}", e),
             }
         }
         Err(e) => eprintln!("Compilation error: {}", e),

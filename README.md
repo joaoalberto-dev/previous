@@ -9,12 +9,12 @@ Previous is made of a Schema definition, a compiler, client and server utils to 
 | Phase | Status | Docs |
 |-------|--------|------|
 | 1. AST Construction | ✅ Complete | [README.md](README.md) |
-| 2. Type Resolution + IR | ⏭️ In Progress | [COMPILER_PHASES.md](COMPILER_PHASES.md) |
-| 3. Binary Encoding | 📅 Planned | |
+| 2. Type Resolution + IR | ✅ Complete | [PHASE2_COMPLETE.md](PHASE2_COMPLETE.md) |
+| 3. Binary Encoding | ✅ Complete | [PHASE3_COMPLETE.md](PHASE3_COMPLETE.md) |
 | 4. Code Generation | 📅 Planned | |
 | 5. CLI | 📅 Planned | |
 
-**Next:** [Phase 2 Tasks](PHASE2_TASKS.md) - Type resolution, IR, and cycle detection
+**Latest:** [Phase 3 Complete](PHASE3_COMPLETE.md) - Binary encoding model with 16 new tests
 
 ## Design
 

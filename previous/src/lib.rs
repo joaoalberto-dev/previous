@@ -289,6 +289,171 @@ impl IRProgram {
 }
 
 // ============================================================================
+// BINARY ENCODING MODEL (Phase 3)
+// ============================================================================
+//
+// Binary Encoding Specification:
+// - string:    u32 length (little-endian) + UTF-8 bytes
+// - number:    i64 (8 bytes, little-endian)
+// - bool:      1 byte (0x00 = false, 0x01 = true)
+// - list:      u32 count (little-endian) + each item encoded recursively
+// - nullable:  1 byte (0x00 = null, 0x01 = present) + value if present
+// - optional:  1 byte (0x00 = absent, 0x01 = present) + value if present
+// - resource:  fields encoded in order (field index is implicit)
+//
+
+/// Runtime value representation for encoding
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    String(String),
+    Number(i64),
+    Bool(bool),
+    List(Vec<Value>),
+    Resource(Vec<FieldValue>),
+    Null,
+    Absent,
+}
+
+/// Field value with optional/nullable handling
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldValue {
+    pub name: String,
+    pub value: Value,
+    pub is_optional: bool,
+    pub is_nullable: bool,
+}
+
+/// Binary encoder for Previous values
+pub struct BinaryEncoder {
+    buffer: Vec<u8>,
+}
+
+impl BinaryEncoder {
+    pub fn new() -> Self {
+        BinaryEncoder { buffer: Vec::new() }
+    }
+
+    /// Get the encoded bytes
+    pub fn finish(self) -> Vec<u8> {
+        self.buffer
+    }
+
+    /// Encode a value based on its type
+    pub fn encode_value(&mut self, value: &Value, ir_type: &IRType, ir_program: &IRProgram) -> Result<(), String> {
+        match (value, ir_type) {
+            (Value::String(s), IRType::Primitive(p)) if p == "string" => {
+                self.encode_string(s);
+                Ok(())
+            }
+            (Value::Number(n), IRType::Primitive(p)) if p == "number" => {
+                self.encode_number(*n);
+                Ok(())
+            }
+            (Value::Bool(b), IRType::Primitive(p)) if p == "bool" => {
+                self.encode_bool(*b);
+                Ok(())
+            }
+            (Value::List(items), IRType::List(inner_type)) => {
+                self.encode_list(items, inner_type, ir_program)
+            }
+            (Value::Resource(fields), IRType::ResourceRef(idx)) => {
+                self.encode_resource(fields, *idx, ir_program)
+            }
+            (Value::Null, _) => {
+                // Null should be handled by nullable wrapper
+                Err("Cannot encode null value without nullable wrapper".to_string())
+            }
+            (Value::Absent, _) => {
+                // Absent should be handled by optional wrapper
+                Err("Cannot encode absent value without optional wrapper".to_string())
+            }
+            _ => Err(format!("Type mismatch: value {:?} does not match type {:?}", value, ir_type)),
+        }
+    }
+
+    /// Encode a field with optional/nullable handling
+    pub fn encode_field(&mut self, field_value: &FieldValue, ir_field: &IRField, ir_program: &IRProgram) -> Result<(), String> {
+        // Handle optional fields
+        if ir_field.optional {
+            match &field_value.value {
+                Value::Absent => {
+                    self.buffer.push(0x00); // absent
+                    return Ok(());
+                }
+                _ => {
+                    self.buffer.push(0x01); // present
+                }
+            }
+        }
+
+        // Handle nullable fields
+        if ir_field.nullable {
+            match &field_value.value {
+                Value::Null => {
+                    self.buffer.push(0x00); // null
+                    return Ok(());
+                }
+                _ => {
+                    self.buffer.push(0x01); // not null
+                }
+            }
+        }
+
+        // Encode the actual value
+        self.encode_value(&field_value.value, &ir_field.field_type, ir_program)
+    }
+
+    // Primitive encoders
+
+    fn encode_string(&mut self, s: &str) {
+        let bytes = s.as_bytes();
+        let len = bytes.len() as u32;
+        self.buffer.extend_from_slice(&len.to_le_bytes());
+        self.buffer.extend_from_slice(bytes);
+    }
+
+    fn encode_number(&mut self, n: i64) {
+        self.buffer.extend_from_slice(&n.to_le_bytes());
+    }
+
+    fn encode_bool(&mut self, b: bool) {
+        self.buffer.push(if b { 0x01 } else { 0x00 });
+    }
+
+    fn encode_list(&mut self, items: &[Value], inner_type: &IRType, ir_program: &IRProgram) -> Result<(), String> {
+        let count = items.len() as u32;
+        self.buffer.extend_from_slice(&count.to_le_bytes());
+
+        for item in items {
+            self.encode_value(item, inner_type, ir_program)?;
+        }
+
+        Ok(())
+    }
+
+    fn encode_resource(&mut self, fields: &[FieldValue], resource_idx: usize, ir_program: &IRProgram) -> Result<(), String> {
+        let ir_resource = &ir_program.resources.get(resource_idx)
+            .ok_or_else(|| format!("Invalid resource index: {}", resource_idx))?;
+
+        // Encode fields in order
+        if fields.len() != ir_resource.fields.len() {
+            return Err(format!(
+                "Field count mismatch: expected {} fields for resource '{}', got {}",
+                ir_resource.fields.len(),
+                ir_resource.name,
+                fields.len()
+            ));
+        }
+
+        for (field_value, ir_field) in fields.iter().zip(ir_resource.fields.iter()) {
+            self.encode_field(field_value, ir_field, ir_program)?;
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
 // TOKEN TYPES
 // ============================================================================
 
@@ -1676,5 +1841,378 @@ mod tests {
         let result = detector.detect();
 
         assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // BINARY ENCODING TESTS (Phase 3)
+    // ========================================================================
+
+    #[test]
+    fn test_encode_string() {
+        let mut encoder = BinaryEncoder::new();
+        encoder.encode_string("hello");
+        let bytes = encoder.finish();
+
+        // Expected: [5, 0, 0, 0, 'h', 'e', 'l', 'l', 'o']
+        // u32 length (5) in little-endian + UTF-8 bytes
+        assert_eq!(bytes, vec![5, 0, 0, 0, b'h', b'e', b'l', b'l', b'o']);
+    }
+
+    #[test]
+    fn test_encode_number() {
+        let mut encoder = BinaryEncoder::new();
+        encoder.encode_number(42);
+        let bytes = encoder.finish();
+
+        // Expected: i64(42) in little-endian (8 bytes)
+        assert_eq!(bytes, vec![42, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_encode_bool_true() {
+        let mut encoder = BinaryEncoder::new();
+        encoder.encode_bool(true);
+        let bytes = encoder.finish();
+
+        assert_eq!(bytes, vec![0x01]);
+    }
+
+    #[test]
+    fn test_encode_bool_false() {
+        let mut encoder = BinaryEncoder::new();
+        encoder.encode_bool(false);
+        let bytes = encoder.finish();
+
+        assert_eq!(bytes, vec![0x00]);
+    }
+
+    #[test]
+    fn test_encode_primitive_value() {
+        let schema = r#"
+            resource User { string name }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let value = Value::String("test".to_string());
+        let ir_type = IRType::Primitive("string".to_string());
+
+        let result = encoder.encode_value(&value, &ir_type, &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // u32(4) + "test"
+        assert_eq!(bytes, vec![4, 0, 0, 0, b't', b'e', b's', b't']);
+    }
+
+    #[test]
+    fn test_encode_list_of_primitives() {
+        let schema = r#"
+            resource Names { list string names }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let value = Value::List(vec![
+            Value::String("a".to_string()),
+            Value::String("b".to_string()),
+        ]);
+        let ir_type = IRType::List(Box::new(IRType::Primitive("string".to_string())));
+
+        let result = encoder.encode_value(&value, &ir_type, &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // u32(2) count + u32(1)+"a" + u32(1)+"b"
+        assert_eq!(bytes, vec![
+            2, 0, 0, 0,           // count = 2
+            1, 0, 0, 0, b'a',     // "a"
+            1, 0, 0, 0, b'b',     // "b"
+        ]);
+    }
+
+    #[test]
+    fn test_encode_list_of_numbers() {
+        let schema = r#"
+            resource Numbers { list number nums }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let value = Value::List(vec![
+            Value::Number(10),
+            Value::Number(20),
+            Value::Number(30),
+        ]);
+        let ir_type = IRType::List(Box::new(IRType::Primitive("number".to_string())));
+
+        let result = encoder.encode_value(&value, &ir_type, &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // u32(3) + i64(10) + i64(20) + i64(30)
+        assert_eq!(bytes.len(), 4 + 8 * 3);
+        assert_eq!(&bytes[0..4], &[3, 0, 0, 0]); // count
+    }
+
+    #[test]
+    fn test_encode_empty_list() {
+        let schema = r#"
+            resource Names { list string names }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let value = Value::List(vec![]);
+        let ir_type = IRType::List(Box::new(IRType::Primitive("string".to_string())));
+
+        let result = encoder.encode_value(&value, &ir_type, &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // u32(0) count only
+        assert_eq!(bytes, vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_encode_nullable_null() {
+        let schema = r#"
+            resource Settings { nullable bool notifications }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let field_value = FieldValue {
+            name: "notifications".to_string(),
+            value: Value::Null,
+            is_optional: false,
+            is_nullable: true,
+        };
+
+        let result = encoder.encode_field(&field_value, &ir.resources[0].fields[0], &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // 0x00 for null
+        assert_eq!(bytes, vec![0x00]);
+    }
+
+    #[test]
+    fn test_encode_nullable_present() {
+        let schema = r#"
+            resource Settings { nullable bool notifications }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let field_value = FieldValue {
+            name: "notifications".to_string(),
+            value: Value::Bool(true),
+            is_optional: false,
+            is_nullable: true,
+        };
+
+        let result = encoder.encode_field(&field_value, &ir.resources[0].fields[0], &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // 0x01 for present + 0x01 for true
+        assert_eq!(bytes, vec![0x01, 0x01]);
+    }
+
+    #[test]
+    fn test_encode_optional_absent() {
+        let schema = r#"
+            resource User { optional number age }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let field_value = FieldValue {
+            name: "age".to_string(),
+            value: Value::Absent,
+            is_optional: true,
+            is_nullable: false,
+        };
+
+        let result = encoder.encode_field(&field_value, &ir.resources[0].fields[0], &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // 0x00 for absent
+        assert_eq!(bytes, vec![0x00]);
+    }
+
+    #[test]
+    fn test_encode_optional_present() {
+        let schema = r#"
+            resource User { optional number age }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let field_value = FieldValue {
+            name: "age".to_string(),
+            value: Value::Number(30),
+            is_optional: true,
+            is_nullable: false,
+        };
+
+        let result = encoder.encode_field(&field_value, &ir.resources[0].fields[0], &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // 0x01 for present + i64(30)
+        assert_eq!(bytes.len(), 1 + 8);
+        assert_eq!(bytes[0], 0x01);
+    }
+
+    #[test]
+    fn test_encode_simple_resource() {
+        let schema = r#"
+            resource User {
+                string name
+                number age
+                bool active
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let value = Value::Resource(vec![
+            FieldValue {
+                name: "name".to_string(),
+                value: Value::String("Alice".to_string()),
+                is_optional: false,
+                is_nullable: false,
+            },
+            FieldValue {
+                name: "age".to_string(),
+                value: Value::Number(30),
+                is_optional: false,
+                is_nullable: false,
+            },
+            FieldValue {
+                name: "active".to_string(),
+                value: Value::Bool(true),
+                is_optional: false,
+                is_nullable: false,
+            },
+        ]);
+
+        let result = encoder.encode_value(&value, &IRType::ResourceRef(0), &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // u32(5) + "Alice" + i64(30) + bool(true)
+        assert_eq!(&bytes[0..4], &[5, 0, 0, 0]); // length of "Alice"
+        assert_eq!(&bytes[4..9], b"Alice");
+        // age follows, then active
+        assert!(bytes.len() > 9);
+    }
+
+    #[test]
+    fn test_encode_nested_resource() {
+        let schema = r#"
+            resource User { string name }
+            resource Profile { User user }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+
+        // Create nested User resource
+        let user_value = Value::Resource(vec![
+            FieldValue {
+                name: "name".to_string(),
+                value: Value::String("Bob".to_string()),
+                is_optional: false,
+                is_nullable: false,
+            },
+        ]);
+
+        // Create Profile with User
+        let profile_value = Value::Resource(vec![
+            FieldValue {
+                name: "user".to_string(),
+                value: user_value,
+                is_optional: false,
+                is_nullable: false,
+            },
+        ]);
+
+        let result = encoder.encode_value(&profile_value, &IRType::ResourceRef(1), &ir);
+        assert!(result.is_ok());
+
+        let bytes = encoder.finish();
+        // u32(3) + "Bob"
+        assert_eq!(&bytes[0..4], &[3, 0, 0, 0]); // length of "Bob"
+        assert_eq!(&bytes[4..7], b"Bob");
+    }
+
+    #[test]
+    fn test_encode_type_mismatch_error() {
+        let schema = r#"
+            resource User { string name }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        let value = Value::Number(42); // Wrong type!
+        let ir_type = IRType::Primitive("string".to_string());
+
+        let result = encoder.encode_value(&value, &ir_type, &ir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Type mismatch"));
+    }
+
+    #[test]
+    fn test_encode_resource_field_count_mismatch() {
+        let schema = r#"
+            resource User {
+                string name
+                number age
+            }
+        "#;
+        let program = parse_schema(schema).unwrap();
+        let resolver = TypeResolver::new(&program).unwrap();
+        let ir = resolver.resolve(program).unwrap();
+
+        let mut encoder = BinaryEncoder::new();
+        // Only provide 1 field when 2 are expected
+        let value = Value::Resource(vec![
+            FieldValue {
+                name: "name".to_string(),
+                value: Value::String("Alice".to_string()),
+                is_optional: false,
+                is_nullable: false,
+            },
+        ]);
+
+        let result = encoder.encode_value(&value, &IRType::ResourceRef(0), &ir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Field count mismatch"));
     }
 }
