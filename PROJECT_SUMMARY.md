@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Previous** is a complete binary protocol and BFF (Backend For Frontend) framework compiler implemented in Rust. It compiles schema definition files (.pr) into type-safe TypeScript client code and Rust server code with binary serialization/deserialization.
+**Previous** is a complete binary protocol and BFF (Backend For Frontend) framework compiler implemented in Rust. It compiles schema definition files (.pr) into type-safe TypeScript client and server code with binary serialization/deserialization.
 
 ## Project Status
 
@@ -13,7 +13,7 @@
 | 1. AST Construction | ✅ | ~700 | 12 | Lexer, Parser, AST |
 | 2. Type Resolution + IR | ✅ | ~800 | 29 | Type resolver, IR, Cycle detection |
 | 3. Binary Encoding | ✅ | ~400 | 16 | Binary protocol encoder |
-| 4. Code Generation | ✅ | ~600 | 12 | TypeScript + Rust codegen |
+| 4. Code Generation | ✅ | ~600 | 12 | TypeScript client + server codegen |
 | 5. CLI & File I/O | ✅ | ~160 | - | Command-line tool, File I/O |
 | **Total** | **✅** | **~3,300** | **69** | **Complete compiler** |
 
@@ -78,27 +78,26 @@ export class User {
 }
 ```
 
-### Output: Rust Server (server.rs)
+### Output: TypeScript Server (server.ts)
 
-```rust
-#[derive(Debug, Clone)]
-pub struct User {
-    pub name: String,
-    pub email: String,
-    pub age: Option<i64>,
-    pub active: bool,
-}
+```typescript
+export class User {
+  private _name: string;
+  private _email: string;
+  private _age: number | null | undefined;
+  private _active: boolean;
 
-impl User {
-    // Builder pattern
-    pub fn new() -> Self { ... }
-    pub fn name(mut self, value: String) -> Self { ... }
-    pub fn email(mut self, value: String) -> Self { ... }
-    pub fn age(mut self, value: Option<i64>) -> Self { ... }
-    pub fn active(mut self, value: bool) -> Self { ... }
+  constructor() { ... }
 
-    // Binary encoder
-    pub fn encode(&self, ir_program: &IRProgram) -> Result<Vec<u8>, String> { ... }
+  // Builder pattern
+  name(value: string): this { ... }
+  email(value: string): this { ... }
+  age(value: number | null | undefined): this { ... }
+  active(value: boolean): this { ... }
+
+  // Binary encoder
+  encode(): Uint8Array { ... }
+  private encodeFields(writer: BinaryWriter): void { ... }
 }
 ```
 
@@ -108,7 +107,7 @@ impl User {
 1. **Parse** - Lexer → Parser → AST
 2. **Validate** - Type resolution, cycle detection
 3. **Encode** - Binary protocol specification
-4. **Generate** - TypeScript + Rust code
+4. **Generate** - TypeScript client + server code
 5. **Write** - Files to disk
 
 ### ✅ Type System
@@ -124,8 +123,8 @@ impl User {
 - **Spec**: Well-defined encoding rules
 
 ### ✅ Code Generation
-- **TypeScript**: Interfaces + decoder classes
-- **Rust**: Structs + builder pattern
+- **TypeScript Client**: Interfaces + decoder classes
+- **TypeScript Server**: Classes + builder pattern + encoder
 - **Quality**: Clean, readable, production-ready code
 - **Headers**: Auto-generated warnings
 
@@ -146,7 +145,7 @@ impl User {
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   File I/O Layer                            │
-│   Read .pr files  →  Write client.ts + server.rs           │
+│   Read .pr files  →  Write client.ts + server.ts           │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
@@ -158,7 +157,7 @@ impl User {
 │  3. Validator   → Check PascalCase, uniqueness              │
 │  4. TypeResolver → AST → IR with validated types            │
 │  5. CycleDetector → Detect circular dependencies            │
-│  6. CodeGenerator → IR → TypeScript + Rust                  │
+│  6. CodeGenerator → IR → TypeScript client + server         │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -238,7 +237,7 @@ previous/
 │   └── blog.pr                # Complex example
 ├── test_output/               # Generated code (git-ignored)
 │   ├── client.ts
-│   └── server.rs
+│   └── server.ts
 ├── PHASE1_*.md                # Phase 1 documentation
 ├── PHASE2_*.md                # Phase 2 documentation
 ├── PHASE3_COMPLETE.md         # Phase 3 documentation
@@ -284,21 +283,21 @@ async function fetchUser(id: number) {
 }
 ```
 
-### Server-Side (Rust)
+### Server-Side (TypeScript)
 
-```rust
-use generated::User;
+```typescript
+import { User } from './generated/server';
 
-async fn get_user(id: u64) -> Result<Vec<u8>> {
-    let user = fetch_from_db(id).await?;
+async function getUser(id: number): Promise<Uint8Array> {
+  const user = await fetchFromDb(id);
 
-    let user_resource = User::new()
-        .name(user.name)
-        .email(user.email)
-        .age(user.age)
-        .active(user.active);
+  const userResource = new User()
+    .name(user.name)
+    .email(user.email)
+    .age(user.age)
+    .active(user.active);
 
-    user_resource.encode(&ir_program)
+  return userResource.encode();
 }
 ```
 
@@ -340,7 +339,7 @@ While the compiler is complete and production-ready, potential future enhancemen
 - [x] Parse .pr schema files
 - [x] Validate types and detect cycles
 - [x] Generate TypeScript client code
-- [x] Generate Rust server code
+- [x] Generate TypeScript server code
 - [x] Binary encoding specification
 - [x] Command-line interface
 - [x] File I/O (read/write)

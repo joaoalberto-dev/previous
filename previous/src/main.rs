@@ -92,11 +92,11 @@ fn compile_command(input: PathBuf, out: PathBuf, verbose: bool) {
             println!();
             println!("Generated files:");
             println!("  {}/client.ts", out.display());
-            println!("  {}/server.rs", out.display());
+            println!("  {}/server.ts", out.display());
             println!();
             println!("Next steps:");
-            println!("  - TypeScript: Import generated client code");
-            println!("  - Rust: Include generated server code in your project");
+            println!("  - Client: Import client.ts for binary decoding");
+            println!("  - Server: Import server.ts for binary encoding");
         }
         Err(e) => {
             eprintln!("✗ Compilation failed!");
@@ -153,12 +153,12 @@ fn run_demo() {
             println!();
 
             println!("Generated code:");
-            println!("  TypeScript: {} lines", output.generated_code.typescript_client.lines().count());
-            println!("  Rust:       {} lines", output.generated_code.rust_server.lines().count());
+            println!("  TypeScript Client: {} lines", output.generated_code.typescript_client.lines().count());
+            println!("  TypeScript Server: {} lines", output.generated_code.typescript_server.lines().count());
             println!();
 
-            // Show sample TypeScript
-            println!("TypeScript Sample (User interface):");
+            // Show sample TypeScript Client
+            println!("TypeScript Client Sample (User interface):");
             println!("{}", "-".repeat(50));
             let ts_lines: Vec<&str> = output.generated_code.typescript_client.lines().collect();
             let user_start = ts_lines.iter().position(|l| l.contains("export interface IUser")).unwrap_or(0);
@@ -167,12 +167,12 @@ fn run_demo() {
             }
             println!();
 
-            // Show sample Rust
-            println!("Rust Sample (User struct):");
+            // Show sample TypeScript Server
+            println!("TypeScript Server Sample (User class):");
             println!("{}", "-".repeat(50));
-            let rust_lines: Vec<&str> = output.generated_code.rust_server.lines().collect();
-            let rust_user_start = rust_lines.iter().position(|l| l.contains("pub struct User")).unwrap_or(0);
-            for line in &rust_lines[rust_user_start..rust_user_start.min(rust_lines.len()).saturating_add(10).min(rust_lines.len())] {
+            let ts_server_lines: Vec<&str> = output.generated_code.typescript_server.lines().collect();
+            let ts_server_user_start = ts_server_lines.iter().position(|l| l.contains("export class User")).unwrap_or(0);
+            for line in &ts_server_lines[ts_server_user_start..ts_server_user_start.min(ts_server_lines.len()).saturating_add(10).min(ts_server_lines.len())] {
                 println!("{}", line);
             }
             println!();

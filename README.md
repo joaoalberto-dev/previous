@@ -64,7 +64,7 @@ resource Notification {
 }
 ```
 
-This will be compiled to TypeScript and Rust code using the Previous compiler:
+This will be compiled to TypeScript client and server code using the Previous compiler:
 
 ```bash
 # Compile the schema
@@ -84,22 +84,22 @@ console.log(user.getEmail());   // Lazy parsed
 console.log(user.toJSON());     // Full JSON conversion
 ```
 
-**Generated Rust Server:**
-```rust
-use generated::User;
+**Generated TypeScript Server:**
+```typescript
+import { User } from './generated/server';
 
 // Build user with builder pattern
-let user = User::new()
-    .name("Jhon".to_string())
-    .email("jhon@email.com".to_string())
-    .age(Some(30))
+const user = new User()
+    .name("John")
+    .email("john@email.com")
+    .age(30)
     .active(false);
 
 // Encode to binary
-let binary_data = user.encode(&ir_program)?;
+const binary_data = user.encode();
 
 // Send to client
-Ok(Response::new(binary_data))
+return new Response(binary_data);
 ```
 
 The Previous compiler handles all the serialization/deserialization automatically. The binary protocol is more efficient than JSON while maintaining type safety on both client and server.
